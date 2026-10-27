@@ -30,7 +30,7 @@ EOF
 APP_ID="lectern"   # = name of the .desktop file and APP_ID in lectern.py
 SCRIPT="lectern.py"
 FILES=(lectern.py transcribe.py transcribe.sh lectern.sh lectern.svg requirements.txt install.sh locale/it.json)
-# shared UI kit of the ecosystem (themes, fonts, icons), copied from ../common next to the app
+# shared UI kit of the Monad apps (themes, fonts, icons), copied from ./common next to the app
 COMMON_FILES=(ui_kit.py fonts/InterVariable.ttf fonts/InterVariable-Italic.ttf fonts/Newsreader.ttf
               fonts/Newsreader-Italic.ttf fonts/OFL-Inter.txt fonts/OFL-Newsreader.txt)
 CHECK="import PySide6.QtMultimedia, requests, numpy, openvino, openvino_genai"
@@ -127,7 +127,7 @@ fi
 for f in "${FILES[@]}"; do
     [[ -f "$SOURCE_DIR/$f" ]] || { echo "Missing file: $SOURCE_DIR/$f" >&2; exit 1; }
 done
-COMMON_DIR="$(dirname "$SOURCE_DIR")/common"
+COMMON_DIR="$SOURCE_DIR/common"
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then  # the installed copy already has the kit next to it
     for f in "${COMMON_FILES[@]}"; do
         [[ -f "$COMMON_DIR/$f" ]] || { echo "Missing file: $COMMON_DIR/$f" >&2; exit 1; }

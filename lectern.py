@@ -54,9 +54,9 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateEdit, QD
                                QWidget, QWidgetAction)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if not os.path.exists(os.path.join(_HERE, "ui_kit.py")):  # running from the project: the kit is in ../common
-    sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "common"))
-import ui_kit as kit  # noqa: E402  (shared UI kit of the ecosystem: themes, fonts, icons, command palette)
+if not os.path.exists(os.path.join(_HERE, "ui_kit.py")):  # running from the repository: the kit is in ./common
+    sys.path.insert(0, os.path.join(_HERE, "common"))
+import ui_kit as kit  # noqa: E402  (shared UI kit of the Monad apps: themes, fonts, icons, command palette)
 
 # Shared with the batch transcriber: models folder, Whisper lookup and anti-hallucination filters
 from transcribe import (CLEANUP_FILTERS, FFMPEG_COMMANDS, HALLUCINATIONS, MODELS_DIR, REPEATED, clean_segments,
@@ -67,6 +67,7 @@ THEME = None   # kit.ThemeManager, created by init_theme()
 APP_NAME = "Lectern"
 APP_ID = "lectern"     # must match the .desktop file created by install.sh
 APP_VERSION = "1.0.0"    # also read by install.sh to confirm what it installed
+APP_REPO = "VarCode-ai/lectern"  # GitHub repository whose releases are checked for updates
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), APP_ID)
 
@@ -1560,7 +1561,7 @@ class LiveWindow(QMainWindow):
         # new releases on GitHub: checked at most once a day, in the background (Help menu to turn it off).
         # A fresh QSettings per call: the check writes from a background thread
         self.updates = kit.UpdateChecker(self, APP_VERSION, lambda k, d=None: QSettings(APP_ID, APP_ID).value(k, d),
-                                         lambda k, v: QSettings(APP_ID, APP_ID).setValue(k, v))
+                                         lambda k, v: QSettings(APP_ID, APP_ID).setValue(k, v), APP_REPO)
         self.pipe_cache = None
         self.vad = None
         self.vad_voice = False
@@ -2204,7 +2205,9 @@ class LiveWindow(QMainWindow):
             + tr("Notes: {path}").format(path=self.notebook_dir()) + "<br>"
             + tr("Models: {path}").format(path=MODELS_DIR) + "<br>"
             + tr("Log: {path}").format(path=LOG_PATH) + "<br><br>"
-            + tr("License: GNU GPL v3 or later")))
+            + tr("License: GNU GPL v3 or later") + "<br><br>"
+            + tr("{app} is part of {family}, local AI apps for OpenVINO.").format(
+                app=APP_NAME, family=f'<a href="{kit.FAMILY_URL}">{kit.FAMILY_NAME}</a>')))
 
     # --- lists and settings ---------------------------------------------------------------
     def refresh_mics(self):

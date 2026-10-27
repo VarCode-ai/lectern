@@ -260,5 +260,6 @@
   "{n} transcripts": "{n} trascrizioni",
   "⚠ Cannot use the {device} ({reason}): transcribing on the CPU, which is slower.": "⚠ Non riesco a usare la {device} ({reason}): trascrivo sulla CPU, più lenta.",
   "⚠ Model error on {device} ({reason}): reloaded, transcription continues.": "⚠ Errore del modello su {device} ({reason}): ricaricato, la trascrizione continua.",
-  "⚠ The {device} failed ({reason}): continuing on the CPU, which is slower. The audio recorded in the meantime was not lost.": "⚠ La {device} ha dato errore ({reason}): continuo sulla CPU, più lenta. L'audio registrato nel frattempo non è andato perso."
+  "⚠ The {device} failed ({reason}): continuing on the CPU, which is slower. The audio recorded in the meantime was not lost.": "⚠ La {device} ha dato errore ({reason}): continuo sulla CPU, più lenta. L'audio registrato nel frattempo non è andato perso.",
+  "{app} is part of {family}, local AI apps for OpenVINO.": "{app} fa parte di {family}, app di IA locale per OpenVINO."
 }

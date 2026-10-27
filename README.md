@@ -1,19 +1,97 @@
-# Lectern
+<p align="center">
+  <a href="https://github.com/VarCode-ai/monad">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/monad-logo-white.svg">
+      <img alt="Monad" src="docs/brand/monad-logo.svg" width="150">
+    </picture>
+  </a>
+</p>
 
-![Lectern recording a lecture](../docs/images/lectern-light.png)
+<p align="center"><img src="lectern.svg" alt="" width="96"></p>
 
-A lecture notebook with live speech-to-text. Lectern records from the microphone and transcribes in real
-time with [Whisper](https://github.com/openai/whisper) running on
-[OpenVINO GenAI](https://github.com/openvinotoolkit/openvino.genai), entirely on your computer. The text
-is organized by course, lecture and category, and saved as plain text files that you can open with any
-editor.
+<h1 align="center">Lectern</h1>
 
-The same folder also contains **lectern-transcribe**, a command-line tool that transcribes every audio or
-video file in a folder.
+<p align="center">
+  <b>A lecture notebook that listens: live speech-to-text with Whisper, entirely on your computer.</b>
+</p>
+
+<p align="center">
+  Lectern records from the microphone and transcribes in real time with
+  <a href="https://github.com/openai/whisper">Whisper</a> on
+  <a href="https://github.com/openvinotoolkit/openvino.genai">OpenVINO GenAI</a>, on your CPU, Intel GPU or NPU.
+  Notes are organized by course, lecture and category, as plain text files you own.<br>
+  <i>A <a href="https://github.com/VarCode-ai/monad">Monad</a> app.</i>
+</p>
+
+<p align="center">
+  <a href="https://github.com/VarCode-ai/lectern/actions/workflows/checks.yml"><img alt="Checks" src="https://github.com/VarCode-ai/lectern/actions/workflows/checks.yml/badge.svg"></a>
+  <a href="https://github.com/VarCode-ai/lectern/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/VarCode-ai/lectern?style=flat-square&color=b4471f"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-b4471f?style=flat-square"></a>
+  <img alt="Runs on Intel CPU, GPU and NPU" src="https://img.shields.io/badge/runs%20on-CPU%20%C2%B7%20GPU%20%C2%B7%20NPU-b4471f?style=flat-square">
+  <a href="https://github.com/VarCode-ai/monad"><img alt="A Monad app" src="https://img.shields.io/badge/%E2%8A%99%20a%20Monad%20app-1c1b19?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/VarCode-ai/monad"><b>Monad</b></a> ·
+  <a href="https://github.com/VarCode-ai/monad#install-in-this-order">Install guide</a> ·
+  <a href="https://github.com/VarCode-ai/ovms-manager">OVMS Manager</a> ·
+  <a href="https://github.com/VarCode-ai/monad#the-apps">All Monad apps</a>
+</p>
+
+<br>
+
+<p align="center">
+  <img src="docs/images/lectern-light.png" alt="Lectern recording a lecture: live transcript, waveform and the local GPU indicator" width="100%">
+</p>
+
+> [!NOTE]
+> **Lectern is part of [Monad](https://github.com/VarCode-ai/monad)**, a family of desktop apps that run AI models locally with
+> Intel OpenVINO: no cloud, no accounts, no telemetry. If you are new to Monad, start from the
+> [install guide](https://github.com/VarCode-ai/monad#install-in-this-order): it covers the system packages and the recommended
+> order, **[OVMS Manager](https://github.com/VarCode-ai/ovms-manager) first, then Lectern**, so that both
+> apps share the models in `~/models`.
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#whisper-models">Whisper models</a> ·
+  <a href="#using-the-notebook">Using the notebook</a> ·
+  <a href="#batch-transcription-lectern-transcribe">lectern-transcribe</a> ·
+  <a href="#how-live-transcription-works">How it works</a> ·
+  <a href="#privacy">Privacy</a> ·
+  <a href="#tips-and-troubleshooting">Troubleshooting</a>
+</p>
+
+Lectern also installs **lectern-transcribe**, a command-line tool that transcribes every audio or video
+file in a folder.
 
 ## Install
 
+### Download the AppImage
+
+From the [latest release](https://github.com/VarCode-ai/lectern/releases/latest), download
+`Lectern-<version>-x86_64.AppImage`, then:
+
 ```bash
+chmod +x Lectern-*-x86_64.AppImage
+./Lectern-*-x86_64.AppImage
+```
+
+The same AppImage runs **lectern-transcribe**, the batch tool:
+
+```bash
+./Lectern-*-x86_64.AppImage transcribe -i ~/Lectures   # --help for every option
+```
+
+The AppImage carries its own Python, Qt and OpenVINO: it installs nothing, needs no root and runs on any
+x86-64 distribution with glibc 2.34 or newer. To verify it, compare it with `SHA256SUMS` from the same
+release. To add it to the application menu, use [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever)
+or [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or install from source.
+
+### Install from source
+
+```bash
+git clone https://github.com/VarCode-ai/lectern.git
+cd lectern
 ./install.sh
 ```
 
@@ -26,7 +104,8 @@ To try Lectern without installing it, run `./lectern.sh` from the clone. It need
 that already has the packages in `requirements.txt`.
 
 Requirements: Python 3.10+ and `ffmpeg`. To use an Intel GPU you also need the Intel compute runtime;
-see the [main README](../README.md#system-packages-by-distribution) for the package names.
+see [System packages](https://github.com/VarCode-ai/monad#system-packages-by-distribution) in the Monad README for the
+package names.
 
 The interface is in English or Italian and follows your system language. To change it, use
 **Tools → Interface language**, then restart Lectern. The language also sets the names Lectern gives to new
@@ -36,7 +115,7 @@ folders and categories (for example *Lecture 03* or *Lezione 03*, *Explanation* 
 
 Lectern uses Whisper models already converted to OpenVINO, stored in `~/models` (or
 `$OPENVINO_MODELS_DIR`). Download them from the *Speech-to-Text* type in
-[OVMS Manager](../ovms-manager/README.md), or directly from
+[OVMS Manager](https://github.com/VarCode-ai/ovms-manager), or directly from
 [huggingface.co/OpenVINO](https://huggingface.co/OpenVINO):
 
 ```bash
@@ -226,6 +305,33 @@ more accurate than transcribing short sentences one by one.
 | The text repeats the course terms instead of the speech | Lectern detects this and retries without the context. If it keeps happening, shorten the recurring terms. |
 | Speech is almost never detected (the waveform moves but is rarely colored) | Install `pw-record` (`pipewire-utils` on Fedora, `pipewire-bin` on Debian/Ubuntu). **Help → Open log file** shows which way the microphone is recorded (`via pw-record` or `via Qt`). |
 | *No microphone found* | Check that PipeWire or PulseAudio is running and that the microphone is not muted in your system settings. |
-| The GPU is not used | Install the Intel compute runtime (see the main README) and check **Help → Open log file**. |
+| The GPU is not used | Install the Intel compute runtime (see [System packages](https://github.com/VarCode-ai/monad#system-packages-by-distribution)) and check **Help → Open log file**. |
 
-More fixes are in [docs/troubleshooting.md](../docs/troubleshooting.md).
+More fixes are in [docs/troubleshooting.md](docs/troubleshooting.md), and the problems common to every
+Monad app in the [Monad troubleshooting guide](https://github.com/VarCode-ai/monad/blob/HEAD/docs/troubleshooting.md).
+
+## Privacy
+
+Lectern transcribes on your computer: your recordings, transcripts and notes never leave it. It connects to
+the internet only to download the Whisper model you choose, the Silero voice detection model on the first
+recording (1.3 MB; offline it falls back to a volume-based detection), and to check at most once a day for
+a new release, which you can turn off in **Help → Check for updates automatically**. The full list of
+connections, for every Monad app, is in [Private by design](https://github.com/VarCode-ai/monad#private-by-design).
+
+## Contributing
+
+Bug reports, translations and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Copyright © 2026 VarCode-ai. Lectern is free software, released under the
+[GNU General Public License v3.0 or later](LICENSE). Third-party components keep their own license:
+OpenVINO GenAI (Apache 2.0), Qt for Python / PySide6 (LGPL v3), Silero VAD (MIT), the Whisper models (MIT),
+and the Inter and Newsreader fonts (SIL Open Font License 1.1, see `common/fonts/`).
+
+<br>
+
+<p align="center">
+  <a href="https://github.com/VarCode-ai/monad"><img src="docs/brand/monad-mark.svg" alt="Monad" width="32"></a><br>
+  <sub>Lectern is a <a href="https://github.com/VarCode-ai/monad">Monad</a> app · local AI for OpenVINO</sub>
+</p>
