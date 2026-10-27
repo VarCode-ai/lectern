@@ -1,6 +1,7 @@
-name: Release binaries
+name: Release
 
-# Builds the AppImage of Lectern and attaches it to the GitHub release of the tag.
+# Builds the two downloads of Lectern, the AppImage and the archive for install.sh, and publishes them in the
+# GitHub release of the tag, with the notes of that version from CHANGELOG.md.
 # Runs on every pushed tag "v*"; it can also be started by hand for an existing tag (Actions → Run workflow).
 on:
   push:
@@ -15,7 +16,7 @@ permissions:
   contents: write
 
 jobs:
-  appimages:
+  release:
     runs-on: ubuntu-22.04
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -40,10 +41,43 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Build the AppImage from the tag
-        # the build script of this checkout builds the sources of the tag, so older tags can be rebuilt too
+        # the build scripts of this checkout build the sources of the tag, so older tags can be rebuilt too
         run: |
           git worktree add --detach "$RUNNER_TEMP/src" "refs/tags/$TAG"
           bash packaging/build-appimage.sh --source "$RUNNER_TEMP/src" --out dist
+
+      - name: Build the archive for install.sh
+        run: bash packaging/build-tarball.sh --source "$RUNNER_TEMP/src" --out dist
+
+      - name: Check the archive
+        # it unpacks into one folder whose installer finds every file it needs
+        run: |
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/unpacked"
+          cd "$RUNNER_TEMP"/unpacked/*/
+          test -x install.sh
+          ./install.sh --help > /dev/null
+          eval "$(sed -n '/^FILES=(/,/)/p' install.sh)"
+          eval "$(sed -n '/^COMMON_FILES=(/,/)$/p' install.sh)"
+          for f in "${FILES[@]}"; do test -f "$f" || { echo "::error::Missing $f"; exit 1; }; done
+          for f in "${COMMON_FILES[@]}"; do test -f "common/$f" || { echo "::error::Missing common/$f"; exit 1; }; done
+          echo "archive OK: $(ls "$GITHUB_WORKSPACE"/dist/*.tar.gz)"
+
+      - name: Checksums
+        run: cd dist && sha256sum ./*.AppImage ./*.tar.gz | sed 's|\./||' > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release notes from CHANGELOG.md
+        # the section "## [x.y.z]" of the tag, up to the next version
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }' "$RUNNER_TEMP/src/CHANGELOG.md" > "$RUNNER_TEMP/notes.md"
+          if [[ ! -s "$RUNNER_TEMP/notes.md" ]] || ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "See [CHANGELOG.md](CHANGELOG.md) for the changes." > "$RUNNER_TEMP/notes.md"
+          fi
+          cat "$RUNNER_TEMP/notes.md"
 
       - name: Smoke test
         run: |
@@ -51,10 +85,10 @@ jobs:
           ./dist/Lectern-*-x86_64.AppImage --appimage-extract-and-run transcribe --help > /dev/null
           echo "lectern-transcribe inside the AppImage works"
 
-      - name: Attach them to the release
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" > /dev/null 2>&1 || \
-            gh release create "$TAG" --title "${TAG#v}" --notes "See [CHANGELOG.md](CHANGELOG.md) for the changes."
-          gh release upload "$TAG" dist/*.AppImage dist/SHA256SUMS --clobber
+            gh release create "$TAG" --title "Lectern ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+          gh release upload "$TAG" dist/*.AppImage dist/*.tar.gz dist/SHA256SUMS --clobber

@@ -81,17 +81,18 @@ needs three steps:
 
 1. Raise `APP_VERSION` in `lectern.py` ([semantic versioning](https://semver.org/)) and add the changes
    to `CHANGELOG.md`. Each Monad app has its own version.
-2. Commit, then tag with a `v` prefix and push the tag: `git tag -a v1.1.0 -m "1.1.0"` and
-   `git push origin v1.1.0`.
-3. The *Release binaries* workflow starts when the tag arrives. It builds the AppImage and attaches it,
-   with `SHA256SUMS`, to the release of the tag, creating the release if needed. Then edit the release on
-   GitHub and paste the CHANGELOG section as its notes. It must be published, not a draft or a
-   pre-release: the app only sees the latest published release.
+2. Commit, then tag with a `v` prefix and push the tag: `git tag -a v1.2.0 -m "1.2.0"` and
+   `git push origin v1.2.0`.
+3. The *Release* workflow starts when the tag arrives. It builds the AppImage and the archive for
+   `install.sh`, checks that the archive has every file the installer needs, and publishes both in the release of the tag, with
+   `SHA256SUMS` and the section of `CHANGELOG.md` for that version as notes. Nothing to edit by hand: the
+   release is published (not a draft), and the app sees it at the next update check.
 
-To build the AppImage on your machine (about 1 GB of downloads the first time):
+To build the downloads on your machine (the AppImage needs about 1 GB of downloads the first time):
 
 ```bash
-packaging/build-appimage.sh            # into dist/
+packaging/build-appimage.sh            # the AppImage, into dist/
+packaging/build-tarball.sh             # the archive for install.sh, into dist/
 ```
 
 ## License

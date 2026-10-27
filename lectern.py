@@ -66,7 +66,7 @@ THEME = None   # kit.ThemeManager, created by init_theme()
 
 APP_NAME = "Lectern"
 APP_ID = "lectern"     # must match the .desktop file created by install.sh
-APP_VERSION = "1.0.0"    # also read by install.sh to confirm what it installed
+APP_VERSION = "1.1.0"    # also read by install.sh to confirm what it installed
 APP_REPO = "VarCode-ai/lectern"  # GitHub repository whose releases are checked for updates
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), APP_ID)
