@@ -9,6 +9,16 @@ then named `ai-app-local-openvino`, together with OVMS Manager; its history was 
 
 ## [Unreleased]
 
+### Added
+
+- While Lectern records or transcribes a file, the computer does not suspend, not even when the lid is closed
+  (a `systemd-inhibit` lock held only while the work runs). `install.sh --allow-sleep` turns it off,
+  `--keep-awake` turns it back on, and an update keeps the previous choice; `LECTERN_KEEP_AWAKE=0` does the same
+  outside the installer.
+- When the GPU fails in the middle of the work and Lectern moves to the CPU, a banner offers to restart it on
+  the GPU: after a driver hang only a new process can use the GPU again. A live recording starts again by
+  itself after the restart.
+
 ## [1.1.0] — 2026-10-27
 
 ### Monad

@@ -44,6 +44,19 @@ To check what OpenVINO sees:
 If the GPU is missing from the list, the problem is the driver, not Lectern. Lectern falls back to the CPU
 automatically and says so in the status line.
 
+### The GPU worked, then Lectern moved to the CPU
+
+The log (**Help → Open log file**) shows errors like `CL_OUT_OF_RESOURCES`, then `CL_INVALID_EVENT` or
+`ProgramBuilder build failed` when the model is loaded again. The GPU driver hung, usually after a suspend
+in the middle of a recording, and `journalctl -k` shows `xe` or `i915` messages at the same time (for example
+`Forcewake domains … failed to acknowledge` or `timedout_job`). After that, the Lectern process cannot use the
+GPU any more, while a new one can: press **Restart on the GPU** in the banner that appears. The text is saved,
+and a recording starts again by itself.
+
+Lectern keeps the computer awake while it records, so this should only happen if it was installed with
+`--allow-sleep`. If it happens without a suspend, it is a bug of the GPU driver: update the kernel and
+`linux-firmware`.
+
 ## Audio
 
 ### No microphone, or the recording stays silent

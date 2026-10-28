@@ -112,6 +112,12 @@ OpenVINO GenAI and PySide6 (a few hundred MB). It adds **Lectern** to the applic
 commands to `~/.local/bin`: `lectern` and `lectern-transcribe`. Run `./install.sh --help` for every
 option, and `./install.sh --uninstall` to remove it. Your notes and models are kept.
 
+While Lectern records or transcribes a file, the computer does not suspend, not even when you close the lid:
+a suspend in the middle of a lecture would lose the audio and can hang the GPU. Lectern holds a
+`systemd-inhibit` lock only for as long as the work runs. To let the computer suspend as usual, install with
+`./install.sh --allow-sleep` (`--keep-awake` turns it back on; an update keeps the previous choice). Outside
+the installer, `LECTERN_KEEP_AWAKE=0` does the same, for example for the AppImage.
+
 To try Lectern without installing it, run `./lectern.sh` from the clone. It needs a Python environment
 that already has the packages in `requirements.txt`.
 
@@ -214,7 +220,7 @@ Open them with **Settings** (Ctrl+,).
 | --- | --- |
 | Microphone | Input device. The list updates when you plug devices in. |
 | Model | Whisper model. Use a *turbo* model live. |
-| Device | `GPU`, `CPU` or `NPU`. If the device cannot be used, Lectern switches to the CPU and tells you. If the GPU fails twice during a lecture, it continues on the CPU without losing audio. |
+| Device | `GPU`, `CPU` or `NPU`. If the device cannot be used, Lectern switches to the CPU and tells you. If the GPU fails twice during a lecture, it continues on the CPU without losing audio, and a banner offers to restart Lectern on the GPU: the recording starts again by itself. |
 | Language | Language of the lecture. *Auto-detect* works, but a fixed language is more reliable on short sentences. |
 | Precision | *Fast* (greedy decoding) is recommended live. *High* (beam search 5) is more accurate but every sentence arrives a few seconds later. |
 | Sensitivity, Pause | How loud speech must be, and how long a silence closes a sentence. For a distant speaker use *High* sensitivity and a pause around 1 s. |

@@ -6,11 +6,15 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [--dev] | --uninstall | --help
+Usage: install.sh [--dev] [--keep-awake | --allow-sleep] | --uninstall | --help
 
   (no option)   install or update: copies the files to ~/.local/share/lectern/app,
                 so the project folder can be moved or deleted afterwards
   --dev         development mode: the menu entry runs the files of THIS folder
+  --keep-awake  while Lectern records or transcribes, the computer does not suspend,
+                not even when the lid is closed (default)
+  --allow-sleep the computer suspends as usual, even in the middle of a recording
+                Without either, an update keeps the choice of the previous install.
   --uninstall   remove app, menu entry, icon, commands and Python environment
                 (models, notes and settings are kept)
 
@@ -107,9 +111,12 @@ pip_install() {  # pip_install VENV args...: pip install with a helpful message 
 }
 
 MODE="install"
+KEEP_AWAKE=""   # yes | no; empty = the choice of the previous install, otherwise yes
 for arg in "$@"; do
     case "$arg" in
         --dev) MODE="dev" ;;
+        --keep-awake) KEEP_AWAKE="yes" ;;
+        --allow-sleep) KEEP_AWAKE="no" ;;
         --uninstall) MODE="uninstall" ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $arg (see --help)" >&2; exit 1 ;;
@@ -127,6 +134,13 @@ fi
 for f in "${FILES[@]}"; do
     [[ -f "$SOURCE_DIR/$f" ]] || { echo "Missing file: $SOURCE_DIR/$f" >&2; exit 1; }
 done
+if [[ -z "$KEEP_AWAKE" ]]; then
+    KEEP_AWAKE="yes"
+    if [[ -f "$DESKTOP_FILE" ]] && grep -q "LECTERN_KEEP_AWAKE=0" "$DESKTOP_FILE"; then KEEP_AWAKE="no"; fi
+fi
+# = KEEP_AWAKE in lectern.py: the variable is set only to turn the feature off
+ENV_PREFIX=""
+[[ "$KEEP_AWAKE" == "no" ]] && ENV_PREFIX="env LECTERN_KEEP_AWAKE=0 "
 COMMON_DIR="$SOURCE_DIR/common"
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then  # the installed copy already has the kit next to it
     for f in "${COMMON_FILES[@]}"; do
@@ -138,6 +152,8 @@ command -v "$PYTHON" >/dev/null || { echo "$PYTHON not found: $(distro_pkg pytho
     { echo "Python $MIN_PYTHON or newer is required ($PYTHON is $("$PYTHON" -V 2>&1))." >&2; exit 1; }
 command -v ffmpeg >/dev/null ||
     echo "  (warning: ffmpeg not found, needed to transcribe files other than .wav: $(distro_pkg ffmpeg ffmpeg-free ffmpeg ffmpeg))"
+[[ "$KEEP_AWAKE" == "no" ]] || command -v systemd-inhibit >/dev/null ||
+    echo "  (warning: systemd-inhibit not found: Lectern cannot keep the computer awake while it records)"
 has_lib libxcb-cursor.so.0 ||
     echo "  (warning: libxcb-cursor not found, Qt needs it on X11 sessions: $(distro_pkg libxcb-cursor0 xcb-util-cursor xcb-util-cursor libxcb-cursor0))"
 # Whisper on an Intel GPU runs on this machine (not in a container): it needs the Intel compute runtime
@@ -212,7 +228,7 @@ pip_install "$VENV_DIR" -r "$RUN_DIR/requirements.txt"
 echo "→ Icon, menu entry and commands"
 install -Dm644 "$RUN_DIR/$APP_ID.svg" "$ICON_FILE"
 mkdir -p "$BIN_DIR" "$(dirname "$DESKTOP_FILE")"
-printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$VENV_DIR/bin/python" "$RUN_DIR/$SCRIPT" > "$BIN_DIR/$APP_ID"
+printf '#!/bin/sh\nexec %s"%s" "%s" "$@"\n' "$ENV_PREFIX" "$VENV_DIR/bin/python" "$RUN_DIR/$SCRIPT" > "$BIN_DIR/$APP_ID"
 chmod 755 "$BIN_DIR/$APP_ID"
 ln -sf "$RUN_DIR/transcribe.sh" "$BIN_DIR/lectern-transcribe"   # transcribe.sh follows the link to find transcribe.py
 # Exec quoted: the paths may contain spaces. A single main category (Education),
@@ -226,7 +242,7 @@ GenericName=Lecture notebook
 GenericName[it]=Quaderno degli appunti delle lezioni
 Comment=Record lectures and transcribe them in real time, organized by course, lecture and category (Whisper on OpenVINO, fully local)
 Comment[it]=Registra le lezioni e trascrivile in tempo reale, organizzate per corso, lezione e categoria (Whisper su OpenVINO, tutto in locale)
-Exec="$VENV_DIR/bin/python" "$RUN_DIR/$SCRIPT"
+Exec=$ENV_PREFIX"$VENV_DIR/bin/python" "$RUN_DIR/$SCRIPT"
 Path=$RUN_DIR
 Icon=$APP_ID
 Terminal=false
@@ -261,6 +277,11 @@ else
     echo "  To use the commands lectern and lectern-transcribe add $BIN_DIR to your PATH."
 fi
 echo "  Notes are saved in: $NOTEBOOK_DIR"
+if [[ "$KEEP_AWAKE" == "yes" ]]; then
+    echo "  While recording the computer does not suspend, not even with the lid closed (--allow-sleep to change)."
+else
+    echo "  The computer can suspend while recording (--keep-awake to prevent it)."
+fi
 echo "  Whisper models go in ${OPENVINO_MODELS_DIR:-~/models}: download them with OVMS Manager → Explore,"
 echo "  or let lectern-transcribe download whisper-large-v3-turbo-int8-ov on first use."
 echo "  To remove it: $RUN_DIR/install.sh --uninstall"

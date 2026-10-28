@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -172,6 +173,10 @@ SILERO_URL = ("https://raw.githubusercontent.com/snakers4/silero-vad/master/"
 SILERO_PATH = os.path.join(CACHE_DIR, "silero_vad_openvino_16k.onnx")
 # Microphone through PipeWire's pw-record when available (see PipeWireSource); LECTERN_AUDIO=qt forces Qt
 PW_RECORD = None if os.environ.get("LECTERN_AUDIO") == "qt" else shutil.which("pw-record")
+# While recording, the computer does not suspend, not even when the lid is closed (see SleepInhibitor): a suspend in
+# the middle of a lecture loses the audio and can hang the GPU. LECTERN_KEEP_AWAKE=0 (install.sh --allow-sleep)
+# turns it off
+KEEP_AWAKE = os.environ.get("LECTERN_KEEP_AWAKE", "1") != "0"
 # ==============================================
 
 # Whisper languages, with their own names; labels in N_() are translated where they are shown
@@ -366,6 +371,43 @@ class PipeWireSource:
     def deleteLater(self):
         self.proc.deleteLater()
 
+class SleepInhibitor:
+    """Keeps the computer awake while it is held: systemd-inhibit takes a "block" lock on suspend, idle and the
+    lid switch for as long as its command runs. The command waits for Lectern itself, so the lock goes away even
+    if Lectern crashes."""
+    WHAT = ("sleep:idle:handle-lid-switch", "sleep:idle")  # the second one if the lid lock is not allowed
+
+    def __init__(self, why):
+        self.why, self.proc = why, None
+        self.program = shutil.which("systemd-inhibit") if KEEP_AWAKE else None
+
+    def acquire(self):
+        if not self.program or self.proc:
+            return
+        for what in self.WHAT:
+            self.proc = subprocess.Popen(
+                [self.program, f"--what={what}", f"--who={APP_NAME}", f"--why={self.why}", "--mode=block",
+                 "tail", f"--pid={os.getpid()}", "-f", "/dev/null"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            try:
+                code = self.proc.wait(0.3)  # refused (no logind, polkit…): it exits right away
+            except subprocess.TimeoutExpired:
+                log.info("suspend blocked while recording (%s)", what)
+                return
+            log.warning("systemd-inhibit --what=%s exited with %s", what, code)
+        self.proc = None
+
+    def release(self):
+        if self.proc:
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)  # systemd-inhibit and the command it runs
+            except ProcessLookupError:
+                pass
+            self.proc.wait()
+            self.proc = None
+            log.info("suspend allowed again")
+
 def speech_mask(probs, threshold):
     """Hysteresis: speech starts above the threshold and continues until it drops well below it,
     so weak consonants in the middle of a word don't break the sentence."""
@@ -425,6 +467,10 @@ class Transcriber(QThread):
     info = Signal(str)
     failed = Signal(str)
     pipe_ready = Signal(object, object)  # key (model, device), pipeline
+    # the GPU worked in this process and then failed: the driver lost its context (for example after a GPU hang or
+    # a suspend) and only a new process can use it again
+    gpu_lost = Signal()
+    gpu_worked = False
 
     def __init__(self, buf, opts, cached=None, parent=None):
         super().__init__(parent)
@@ -473,6 +519,8 @@ class Transcriber(QThread):
             pipe = openvino_genai.WhisperPipeline(self.o["model"], self.o["device"])
         self.info.emit(tr("Model ready in {seconds} s.").format(seconds=f"{time.time() - t0:.1f}"))
         log.info("model loaded in %.1f s", time.time() - t0)
+        if self.o["device"] == "GPU":
+            Transcriber.gpu_worked = True
         self.pipe_ready.emit(key, pipe)
         return pipe
 
@@ -493,6 +541,8 @@ class Transcriber(QThread):
                 self.device_changed.emit("CPU")
                 self.info.emit(tr("⚠ Cannot use the {device} ({reason}): transcribing on the CPU, which is "
                                   "slower.").format(device=device, reason=first_line(first)))
+                if device == "GPU" and Transcriber.gpu_worked:
+                    self.gpu_lost.emit()
                 return True
             except Exception:  # noqa: BLE001
                 log.exception("load failed on the CPU too")
@@ -551,6 +601,8 @@ class Transcriber(QThread):
             self.info.emit(tr("⚠ The {device} failed ({reason}): continuing on the CPU, which is slower. "
                               "The audio recorded in the meantime was not lost.").format(device=old_device,
                                                                                         reason=reason))
+            if old_device == "GPU" and Transcriber.gpu_worked:
+                self.gpu_lost.emit()
         else:
             self.info.emit(tr("⚠ Model error on {device} ({reason}): reloaded, transcription continues.")
                            .format(device=device, reason=reason))
@@ -1150,6 +1202,39 @@ class StatusPill(QLabel, kit.Themed):
         color = C[key]
         self.setText(f"<span style='color:{color if self.on else alpha(color, 0.25)}'>●</span>&nbsp; {text}")
 
+class GpuBanner(QFrame, kit.Themed):
+    """Shown when the GPU fails in the middle of the work and Lectern moves to the CPU: the GPU driver cannot be
+    used again by this process, a restart brings it back."""
+
+    def __init__(self, on_restart):
+        super().__init__()
+        self.setObjectName("gpuBanner")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(12, 6, 6, 6)
+        lay.setSpacing(8)
+        self.pic = QLabel()
+        lay.addWidget(self.pic)
+        self.label = QLabel(tr("The GPU stopped responding: Lectern is transcribing on the CPU, which is slower. "
+                               "Restart it to use the GPU again."))
+        self.label.setObjectName("gpuText")
+        self.label.setWordWrap(True)
+        lay.addWidget(self.label, 1)
+        self.btn_restart = QPushButton(tr("Restart on the GPU"))
+        self.btn_restart.setObjectName("primary")
+        self.btn_restart.setCursor(Qt.PointingHandCursor)
+        self.btn_restart.setToolTip(tr("The text is saved. A recording stops and starts again by itself after "
+                                       "the restart; a file transcription stops."))
+        self.btn_restart.clicked.connect(on_restart)
+        lay.addWidget(self.btn_restart)
+        lay.addWidget(kit.IconButton("close", tooltip=tr("Later"), slot=self.hide, size=16))
+        self.hide()
+        self.follow_theme()
+
+    def restyle(self):
+        self.setStyleSheet(f"#gpuBanner {{ background: {alpha(C['warn'], 0.12)}; border-radius: {kit.RADIUS['lg']}px; }} "
+                           f"#gpuText {{ color: {C['text']}; font-weight: 600; }}")
+        self.pic.setPixmap(kit.icon("warning", C["warn"], 18).pixmap(18, 18))
+
 class Waveform(QWidget):
     """Live microphone level as a scrolling row of bars: accent colored where speech is detected, faint in
     silence. It replaces a plain level meter: you see at a glance that the app hears you, and when."""
@@ -1563,6 +1648,9 @@ class LiveWindow(QMainWindow):
         self.updates = kit.UpdateChecker(self, APP_VERSION, lambda k, d=None: QSettings(APP_ID, APP_ID).value(k, d),
                                          lambda k, v: QSettings(APP_ID, APP_ID).setValue(k, v), APP_REPO)
         self.pipe_cache = None
+        self.server = None           # single-instance server, closed before a restart (set by main)
+        self.restart_args = None     # not None: restart as soon as the work in progress has stopped
+        self.awake = SleepInhibitor(tr("Recording a lecture"))
         self.vad = None
         self.vad_voice = False
         self.worker = self.source = self.io = self.buf = None
@@ -1811,6 +1899,8 @@ class LiveWindow(QMainWindow):
                                               self.updates.skip)
         self.updates.found.connect(self.update_banner.show_release)
         lay.addWidget(self.update_banner)
+        self.gpu_banner = GpuBanner(self.restart_on_gpu)
+        lay.addWidget(self.gpu_banner)
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_empty())
         self.stack.addWidget(self._build_lesson())
@@ -2891,11 +2981,13 @@ class LiveWindow(QMainWindow):
 
     def _start_worker(self, worker):
         self.worker = worker
+        self.awake.acquire()
         worker.status.connect(self.pill.set_state)
         worker.partial.connect(self.on_partial)
         worker.final.connect(self.on_final)
         worker.info.connect(self.set_info)
         worker.device_changed.connect(self._update_device_chip)
+        worker.gpu_lost.connect(self.gpu_banner.show)
         worker.failed.connect(self.on_failed)
         worker.pipe_ready.connect(lambda key, pipe: setattr(self, "pipe_cache", (key, pipe)))
         worker.finished.connect(self.on_worker_done)
@@ -3182,6 +3274,36 @@ class LiveWindow(QMainWindow):
             self.update_header()
         if isinstance(worker, FileTranscriber) and self.file_queue is not None:
             self._file_finished(worker, removed)
+        if not self.worker:  # nothing else started (the next file of the queue)
+            self.awake.release()
+            if self.restart_args is not None:
+                self._restart()
+
+    def restart_on_gpu(self):
+        """After a GPU failure only a new process can use the GPU again. The work in progress is stopped and
+        saved first; a live recording starts again by itself in the new process."""
+        self.gpu_banner.btn_restart.setEnabled(False)
+        self.restart_args = ["--record"] if self.source else []
+        self.set_info(tr("Restarting {app}…").format(app=APP_NAME))
+        if self.file_queue is not None:
+            self.stop_file_job()
+        elif self.source:
+            self.stop_recording()
+        if not self.worker and self.restart_args is not None:  # not already restarted by on_worker_done
+            self._restart()
+
+    def _restart(self):
+        log.info("restarting%s", " and recording again" if self.restart_args else "")
+        args = self.restart_args
+        self.restart_args = None
+        self.close()  # saves the transcript, the settings and the window geometry
+        self.settings.sync()
+        if self.server:
+            self.server.close()  # otherwise the new instance would just bring this window to the front
+        appimage = os.environ.get("APPIMAGE")  # the mounted AppImage goes away with this process
+        program, script = (appimage, []) if appimage else (sys.executable, [os.path.abspath(sys.argv[0])])
+        if not QProcess.startDetached(program, script + args):
+            log.error("cannot restart: %s %s", program, script)
 
     def _close_files(self):
         if self.wav:
@@ -3294,6 +3416,7 @@ class LiveWindow(QMainWindow):
             self.worker.cancel()
             self.worker.wait(5000)
             self.save_note()  # while the worker exists it saves only the final text, without the preview
+        self.awake.release()
         self._close_files()
         self.save_note()
         self.settings.setValue("geometry", self.saveGeometry())
@@ -3406,7 +3529,10 @@ def main():
         win.activateWindow()
 
     server.newConnection.connect(bring_to_front)
+    win.server = server
     win.show()
+    if "--record" in sys.argv[1:]:  # restarted after a GPU failure in the middle of a recording
+        QTimer.singleShot(0, win.start_recording)
     sys.exit(app.exec())
 
 # Required guard: openvino-genai uses multiprocessing (see transcribe.py)
