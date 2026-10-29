@@ -9,6 +9,8 @@ then named `ai-app-local-openvino`, together with OVMS Manager; its history was 
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-29
+
 ### Added
 
 - While Lectern records or transcribes a file, the computer does not suspend, not even when the lid is closed
@@ -62,6 +64,7 @@ First public release.
 - English and Italian interface, per-user installer for every major glibc distribution, automatic fallback
   from GPU or NPU to the CPU, and update notifications that can be turned off.
 
-[Unreleased]: https://github.com/VarCode-ai/lectern/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/VarCode-ai/lectern/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/VarCode-ai/lectern/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/VarCode-ai/lectern/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/VarCode-ai/lectern/releases/tag/v1.0.0
