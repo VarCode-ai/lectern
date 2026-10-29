@@ -67,7 +67,7 @@ THEME = None   # kit.ThemeManager, created by init_theme()
 
 APP_NAME = "Lectern"
 APP_ID = "lectern"     # must match the .desktop file created by install.sh
-APP_VERSION = "1.2.0"    # also read by install.sh to confirm what it installed
+APP_VERSION = "1.2.1"    # also read by install.sh to confirm what it installed
 APP_REPO = "VarCode-ai/lectern"  # GitHub repository whose releases are checked for updates
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), APP_ID)
@@ -162,6 +162,12 @@ PRE_ROLL_S = 0.4           # audio kept before speech starts (don't cut the firs
 TAIL_S = 0.3               # audio kept after speech ends
 MIN_SPEECH_FRAMES = 4      # less than ~130 ms of speech = isolated noise
 MIC_STALL_S = 2.0          # no data from the microphone for this long = stalled stream, reopen it
+# If it stalls again, the microphone stays closed for longer than WirePlumber's suspend timeout (5 s): PipeWire
+# then closes the device itself and opens it from scratch, which revives a capture stream stuck in the driver
+# (measured on a Tiger Lake digital microphone). Reopening it at once would keep the stuck stream alive.
+MIC_RESET_S = 6.0          # first pause; it doubles at every new stall, up to MIC_RESET_MAX_S
+MIC_RESET_MAX_S = 30.0
+MIC_MAX_FAILS = 8          # stalls in a row with no audio in between (~3 min) before giving up
 VAD_RESET_S = 30           # after this much continuous silence Silero's internal state is reset
 PARAGRAPH_GAP_S = 4.0      # pause after which a new paragraph starts
 LOG_PATH = os.path.join(CACHE_DIR, "lectern.log")  # diagnostics: timings and decisions of every step
@@ -370,6 +376,25 @@ class PipeWireSource:
 
     def deleteLater(self):
         self.proc.deleteLater()
+
+class MicPause:
+    """Stands in for the microphone while it is closed after a stall: recording goes on, and the
+    watchdog opens the real stream again once `until` (time.time()) has passed."""
+
+    class State:
+        name = "closed"
+
+    def __init__(self, until):
+        self.until = until
+
+    def state(self):
+        return self.State
+
+    def stop(self):
+        pass
+
+    def deleteLater(self):
+        pass
 
 class SleepInhibitor:
     """Keeps the computer awake while it is held: systemd-inhibit takes a "block" lock on suspend, idle and the
@@ -2948,7 +2973,7 @@ class LiveWindow(QMainWindow):
 
         self.buf = AudioBuffer()
         self.samples = 0
-        self.mic, self.mic_restarts, self.silent_frames = mic, 0, 0
+        self.mic, self.mic_restarts, self.mic_fails, self.silent_frames = mic, 0, 0, 0
         self.wave_time = 0.0
         self.wave.clear()
         if not self._open_source():
@@ -3161,24 +3186,56 @@ class LiveWindow(QMainWindow):
 
     def _watchdog(self):
         """Some systems (PulseAudio/PipeWire, device suspend) stop sending audio without reporting an
-        error: if nothing arrives for a few seconds, the microphone is reopened."""
-        if not self.source or time.time() - self.last_audio < MIC_STALL_S:
+        error: if nothing arrives for a few seconds, the microphone is reopened. The first time at once; if it
+        stalls again it stays closed for a while first, so that the system can restart the device."""
+        now = time.time()
+        if isinstance(self.source, MicPause):
+            if now >= self.source.until:
+                self._reopen_mic("closed")
+            return
+        if not self.source or now - self.last_audio < MIC_STALL_S:
             return
         state = self.source.state().name
         self.mic_restarts += 1
-        if self.use_pw and self.mic_restarts >= 2:  # pw-record keeps stalling (or exited): fall back to Qt
+        self.mic_fails += 1
+        if self.use_pw and state == "NotRunning":  # pw-record exited: Qt from now on
             self.use_pw = False
-        log.info("microphone silent for %.1f s (state %s): reopening it", time.time() - self.last_audio, state)
+        log.info("microphone silent for %.1f s (state %s, %d in a row)", now - self.last_audio, state, self.mic_fails)
+        if self.mic_fails == 1:
+            self._reopen_mic(state)
+        else:
+            self._pause_mic()
+
+    def _pause_mic(self):
+        """Close the microphone for a while (longer at every stall in a row), or give up after too many."""
+        if self.mic_fails > MIC_MAX_FAILS:
+            self.set_info(tr("The microphone stopped sending audio and cannot be reopened: press Stop and start "
+                             "recording again."), "err")
+            self.stop_recording()
+            return
+        wait = min(MIC_RESET_S * 2 ** (self.mic_fails - 2), MIC_RESET_MAX_S)
+        log.info("microphone closed for %.0f s so that the system restarts it", wait)
+        self.source.stop()
+        self.source.deleteLater()
+        self.source, self.io, self.level = MicPause(time.time() + wait), None, 0
+        self.set_info(tr("The microphone stopped sending audio: Lectern closes it for {seconds} s so that the "
+                         "system can restart it, then records again ({count}×).").format(
+                             seconds=round(wait), count=self.mic_restarts), "warn")
+
+    def _reopen_mic(self, state):
         self.leftover = b""
         if self._open_source():
-            msg = tr("The microphone had stopped sending audio (state: {state}): reopened automatically "
-                     "({count}×).").format(state=state, count=self.mic_restarts)
+            if state == "closed":
+                msg = tr("Microphone reopened ({count}×).").format(count=self.mic_restarts)
+            else:
+                msg = tr("The microphone had stopped sending audio (state: {state}): reopened automatically "
+                         "({count}×).").format(state=state, count=self.mic_restarts)
             self.set_info(msg, "warn")
-        else:
-            msg = tr("The microphone stopped sending audio and cannot be reopened: press Stop and start "
-                     "recording again.")
-            self.set_info(msg, "err")
-            self.stop_recording()
+        else:  # the device is not even there: wait and try again
+            log.warning("cannot reopen the microphone")
+            self.mic_fails += 1
+            self.source = MicPause(0)
+            self._pause_mic()
 
     def stop_recording(self):
         if self.source:
@@ -3202,7 +3259,7 @@ class LiveWindow(QMainWindow):
         x = self.resampler(to_float32(raw[:usable], self.fmt))
         if not len(x):
             return
-        self.last_audio = time.time()
+        self.last_audio, self.mic_fails = time.time(), 0
         probs = self.vad(x)
         self.buf.append(x, probs)
         self.samples += len(x)

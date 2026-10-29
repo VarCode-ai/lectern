@@ -9,6 +9,16 @@ then named `ai-app-local-openvino`, together with OVMS Manager; its history was 
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-10-29
+
+### Fixed
+
+- A microphone that stopped sending audio in the middle of a recording (seen on a Tiger Lake digital microphone)
+  never came back: Lectern reopened it every 2 seconds, so the system never got to restart the device. Now, if it
+  stalls again right after the first reopen, Lectern closes it for 6 seconds (then 12, 24, up to 30), long enough
+  for PipeWire to close the device and open it from scratch, and keeps recording through pw-record instead of
+  falling back to Qt, which reads the same stuck device. After about 3 minutes without audio it stops.
+
 ## [1.2.0] — 2026-10-29
 
 ### Added
@@ -64,7 +74,8 @@ First public release.
 - English and Italian interface, per-user installer for every major glibc distribution, automatic fallback
   from GPU or NPU to the CPU, and update notifications that can be turned off.
 
-[Unreleased]: https://github.com/VarCode-ai/lectern/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/VarCode-ai/lectern/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/VarCode-ai/lectern/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/VarCode-ai/lectern/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/VarCode-ai/lectern/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/VarCode-ai/lectern/releases/tag/v1.0.0

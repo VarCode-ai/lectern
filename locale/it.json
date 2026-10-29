@@ -266,5 +266,7 @@
   "{n} transcripts": "{n} trascrizioni",
   "⚠ Cannot use the {device} ({reason}): transcribing on the CPU, which is slower.": "⚠ Non riesco a usare la {device} ({reason}): trascrivo sulla CPU, più lenta.",
   "⚠ Model error on {device} ({reason}): reloaded, transcription continues.": "⚠ Errore del modello su {device} ({reason}): ricaricato, la trascrizione continua.",
-  "⚠ The {device} failed ({reason}): continuing on the CPU, which is slower. The audio recorded in the meantime was not lost.": "⚠ La {device} ha dato errore ({reason}): continuo sulla CPU, più lenta. L'audio registrato nel frattempo non è andato perso."
+  "⚠ The {device} failed ({reason}): continuing on the CPU, which is slower. The audio recorded in the meantime was not lost.": "⚠ La {device} ha dato errore ({reason}): continuo sulla CPU, più lenta. L'audio registrato nel frattempo non è andato perso.",
+  "Microphone reopened ({count}×).": "Microfono riaperto ({count}×).",
+  "The microphone stopped sending audio: Lectern closes it for {seconds} s so that the system can restart it, then records again ({count}×).": "Il microfono ha smesso di inviare audio: Lectern lo chiude per {seconds} s per permettere al sistema di riavviarlo, poi riprende a registrare ({count}×)."
 }
