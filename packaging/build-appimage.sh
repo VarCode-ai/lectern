@@ -9,7 +9,8 @@
 #   packaging/build-appimage.sh --out DIR           where to write the AppImages (default: dist/)
 #
 # How: a relocatable CPython from python-build-standalone (built for glibc 2.17), the official manylinux
-# wheels of the requirements, the app files listed in its install.sh, and appimagetool.
+# wheels of the requirements, the app files listed in its install.sh, the user-space Intel NPU driver (see
+# npu_driver.py), and appimagetool.
 # Needs: bash, curl, tar, sha256sum and network access. No root.
 set -euo pipefail
 
@@ -81,6 +82,14 @@ for app in "${APPS[@]}"; do
     for f in "${COMMON_FILES[@]}"; do
         install -Dm644 "$SOURCE/common/$f" "$appdir/usr/app/$f"
     done
+
+    # The user-space Intel NPU driver with its compiler, next to the app (usr/npu-driver): Lectern uses it when
+    # the NPU driver of the system has no compiler (see npu_driver.py). Kernel module and firmware stay the host's
+    if [[ -f "$appdir/usr/app/npu_driver.py" ]]; then
+        echo "→ Intel NPU driver"
+        "$py" "$appdir/usr/app/npu_driver.py" install "$WORK/cache/npu-driver"   # downloaded once per version
+        cp -a "$WORK/cache/npu-driver" "$appdir/usr/npu-driver"
+    fi
 
     echo "→ Trimming what the apps never use"
     site="$(echo "$appdir"/usr/python/lib/python3.*/site-packages)"

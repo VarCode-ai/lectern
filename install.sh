@@ -6,7 +6,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [--dev] [--keep-awake | --allow-sleep] | --uninstall | --help
+Usage: install.sh [--dev] [--keep-awake | --allow-sleep] [--no-npu-driver] | --uninstall | --help
 
   (no option)   install or update: copies the files to ~/.local/share/lectern/app,
                 so the project folder can be moved or deleted afterwards
@@ -15,6 +15,9 @@ Usage: install.sh [--dev] [--keep-awake | --allow-sleep] | --uninstall | --help
                 not even when the lid is closed (default)
   --allow-sleep the computer suspends as usual, even in the middle of a recording
                 Without either, an update keeps the choice of the previous install.
+  --no-npu-driver  do not download the Intel NPU driver, even if this machine needs it
+                (by default it is downloaded when the NPU driver of the system has no
+                compiler, as in Fedora 44 and 45: see npu_driver.py)
   --uninstall   remove app, menu entry, icon, commands and Python environment
                 (models, notes and settings are kept)
 
@@ -24,6 +27,7 @@ Environment variables:
 Installed layout:
   ~/.local/share/lectern/app/     copy of the files
   ~/.local/share/lectern/venv/    OpenVINO GenAI, PySide6, …
+  ~/.local/share/lectern/npu-driver/  Intel NPU driver and compiler, only if needed
   ~/.local/share/applications/lectern.desktop
   ~/.local/bin/lectern, ~/.local/bin/lectern-transcribe
 Whisper models are looked for in ~/models (or $OPENVINO_MODELS_DIR).
@@ -33,7 +37,8 @@ EOF
 
 APP_ID="lectern"   # = name of the .desktop file and APP_ID in lectern.py
 SCRIPT="lectern.py"
-FILES=(lectern.py transcribe.py transcribe.sh lectern.sh lectern.svg requirements.txt install.sh locale/it.json)
+FILES=(lectern.py transcribe.py npu_driver.py transcribe.sh lectern.sh lectern.svg requirements.txt install.sh
+       locale/it.json)
 # shared UI kit of the Monad apps (themes, fonts, icons), copied from ./common next to the app
 COMMON_FILES=(ui_kit.py fonts/InterVariable.ttf fonts/InterVariable-Italic.ttf fonts/Newsreader.ttf
               fonts/Newsreader-Italic.ttf fonts/OFL-Inter.txt fonts/OFL-Newsreader.txt)
@@ -112,11 +117,13 @@ pip_install() {  # pip_install VENV args...: pip install with a helpful message 
 
 MODE="install"
 KEEP_AWAKE=""   # yes | no; empty = the choice of the previous install, otherwise yes
+NPU_DRIVER="yes"
 for arg in "$@"; do
     case "$arg" in
         --dev) MODE="dev" ;;
         --keep-awake) KEEP_AWAKE="yes" ;;
         --allow-sleep) KEEP_AWAKE="no" ;;
+        --no-npu-driver) NPU_DRIVER="no" ;;
         --uninstall) MODE="uninstall" ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $arg (see --help)" >&2; exit 1 ;;
@@ -224,6 +231,20 @@ create_venv "$VENV_DIR"
 pip_install "$VENV_DIR" pip
 pip_install "$VENV_DIR" -r "$RUN_DIR/requirements.txt"
 "$VENV_DIR/bin/python" -c "$CHECK" || { echo "Installing the dependencies failed." >&2; exit 1; }
+
+# Whisper on the NPU runs with the NPU driver of this machine, which needs its compiler: when the system has
+# none, Lectern uses the official Intel driver kept in $SUITE_DIR/npu-driver (see npu_driver.py)
+NPU_DIR="$SUITE_DIR/npu-driver"
+if [[ "$NPU_DRIVER" == "no" ]]; then
+    rm -rf "$NPU_DIR"
+elif reason="$("$VENV_DIR/bin/python" "$RUN_DIR/npu_driver.py" needed)"; then
+    echo "→ Intel NPU driver ($reason)"
+    "$VENV_DIR/bin/python" "$RUN_DIR/npu_driver.py" install "$NPU_DIR" ||
+        echo "  (warning: the NPU driver could not be installed: on the NPU only the system driver is tried)"
+    has_lib libze_loader.so.1 ||
+        echo "  (warning: the Level Zero loader is missing, the NPU needs it:" \
+             "$(distro_pkg libze1 oneapi-level-zero level-zero-loader libze_loader1))"
+fi
 
 echo "→ Icon, menu entry and commands"
 install -Dm644 "$RUN_DIR/$APP_ID.svg" "$ICON_FILE"

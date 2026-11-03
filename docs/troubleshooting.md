@@ -57,6 +57,44 @@ Lectern keeps the computer awake while it records, so this should only happen if
 `--allow-sleep`. If it happens without a suspend, it is a bug of the GPU driver: update the kernel and
 `linux-firmware`.
 
+### The NPU is listed but the model does not load
+
+The log shows `load failed on NPU` with `Compilation failed. Level0 pfnCreate2 result:
+ZE_RESULT_ERROR_UNSUPPORTED_FEATURE`, and Lectern continues on the CPU. OpenVINO sees the NPU, but the NPU
+driver of the system has no compiler, which it needs to load any model. Some distribution packages leave it
+out: Fedora 44 and 45 ship `intel-npu-driver` 1.32 without it.
+
+Lectern brings the official [Intel NPU driver](https://github.com/intel/linux-npu-driver) with its compiler,
+as OVMS Manager does in its container image, and uses it by itself when the system driver has no compiler.
+The AppImage carries it. `install.sh` downloads it into `~/.local/share/lectern/npu-driver` when this machine
+needs it: if you installed an earlier version, run `./install.sh` again. The kernel module
+(`intel_vpu`) and the firmware stay those of your system.
+
+To see which driver Lectern uses, and why:
+
+```bash
+~/.local/share/lectern/venv/bin/python ~/.local/share/lectern/app/npu_driver.py status
+```
+
+The log also shows `NPU driver: bundled 1.38.0` or `NPU driver: system` every time a model is loaded on the
+NPU. `LECTERN_NPU_DRIVER=system` never uses the bundled driver, `LECTERN_NPU_DRIVER=bundled` always does, and
+`./install.sh --no-npu-driver` does not download it. The bundled driver needs glibc 2.38 or newer and the Level
+Zero loader of your distribution (`oneapi-level-zero` on Fedora, `libze1` on Debian and Ubuntu).
+
+The first time a model is loaded on the NPU, the driver compiles it in a separate process, and the status bar
+shows how long it has been going: on a Core Ultra 7 355 it takes 3 to 6 minutes for
+`whisper-large-v3-turbo-int8-ov` and `whisper-large-v3-int8-ov`, but about 24 minutes for
+`whisper-large-v3-turbo-int4-ov`, so on the NPU prefer the INT8 models. You can already speak, the audio is kept
+aside. The compiled model is saved as files in `~/.cache/lectern/ov_cache` (1 to 2.5 GB per model), shared by
+Lectern and `lectern-transcribe`, and later loads take a second or two. Lectern turns off the driver's own cache
+(`~/.cache/ze_intel_npu_cache`): it is limited to 1 GB and deletes compiled models to stay under it, so a
+compiled Whisper never stayed there. You can delete that folder.
+
+Two things do not work on the NPU yet, with OpenVINO GenAI 2026.4: beam search, so Lectern and
+`lectern-transcribe` use greedy decoding there, and the initial prompt, so the course terms and the *Context* of
+the settings are not passed to Whisper (with them every sentence fails with `Check '*roi_end <= *max_dim'
+failed`). To use the course terms, choose the GPU or the CPU.
+
 ## Audio
 
 ### No microphone, or the recording stays silent

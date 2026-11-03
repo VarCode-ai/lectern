@@ -108,9 +108,12 @@ cd lectern
 ```
 
 The installer copies the files to `~/.local/share/lectern/app` and creates a Python environment with
-OpenVINO GenAI and PySide6 (a few hundred MB). It adds **Lectern** to the application menu and two
-commands to `~/.local/bin`: `lectern` and `lectern-transcribe`. Run `./install.sh --help` for every
-option, and `./install.sh --uninstall` to remove it. Your notes and models are kept.
+OpenVINO GenAI and PySide6 (a few hundred MB). If your NPU driver has no compiler, as in Fedora 44 and 45,
+it also downloads the official Intel NPU driver into `~/.local/share/lectern/npu-driver` (about 50 MB; see
+[the troubleshooting guide](docs/troubleshooting.md#the-npu-is-listed-but-the-model-does-not-load)).
+It adds **Lectern** to the application menu and two commands to `~/.local/bin`: `lectern` and
+`lectern-transcribe`. Run `./install.sh --help` for every option, and `./install.sh --uninstall` to remove
+it. Your notes and models are kept.
 
 While Lectern records or transcribes a file, the computer does not suspend, not even when you close the lid:
 a suspend in the middle of a lecture would lose the audio and can hang the GPU. Lectern holds a
@@ -147,12 +150,35 @@ model is found.
 | Model | Size | Use |
 | --- | --- | --- |
 | `whisper-large-v3-turbo-int8-ov` | ~0.8 GB | **Live recording.** Fast, with accuracy close to large-v3. |
-| `whisper-large-v3-int8-ov` | ~1.6 GB | **Files.** The most accurate on difficult audio, about 4 times slower. |
+| `whisper-large-v3-int8-ov` | ~1.6 GB | **Files.** The most accurate on difficult audio, about 3 times slower. |
 | `whisper-small-*` / `whisper-base-*` | 0.1–0.3 GB | Slow CPUs without an Intel GPU. Less accurate. |
 | `distil-whisper-*` | — | English only. |
 
 Lectern finds every folder under `~/models` whose path contains `whisper` and that holds an
 `openvino_encoder_model.xml`. Press **F5** to refresh the list after downloading a model.
+
+### Which device
+
+Time to transcribe 5 minutes of a real Italian lecture from a file, on a Core Ultra 7 355 (greedy decoding):
+
+| Model | NPU | GPU | CPU |
+| --- | --- | --- | --- |
+| `whisper-large-v3-turbo-int8-ov` | **51 s** (5.9× real time) | 61 s (4.9×) | 258 s (1.2×) |
+| `whisper-large-v3-int8-ov` | **109 s** (2.7×) | 185 s (1.6×) | — |
+
+Live, on the NPU, a sentence of a few seconds is transcribed in about 0.4 s.
+
+- **NPU** (Core Ultra): the fastest on this machine, and it leaves the GPU and CPU free. The first time a
+  model runs on it, it is compiled in a separate process (3 to 6 minutes for the INT8 models; the status bar
+  shows the time) and saved in `~/.cache/lectern/ov_cache`. After that it loads in a second or two. Prefer
+  the INT8 models: `whisper-large-v3-turbo-int4-ov` takes about 24 minutes to compile. On the NPU the course
+  terms are not passed to Whisper and beam search is not used, because OpenVINO GenAI does not support them
+  there yet. If your distribution's NPU driver has no compiler (Fedora 44 and 45), Lectern uses the Intel
+  driver it brings with it: see
+  [the troubleshooting guide](docs/troubleshooting.md#the-npu-is-listed-but-the-model-does-not-load).
+- **GPU** (Intel integrated or Arc): fast, with the course terms and High precision. Needs the Intel compute
+  runtime.
+- **CPU**: works everywhere, about real time with turbo.
 
 ## Using the notebook
 
@@ -220,11 +246,11 @@ Open them with **Settings** (Ctrl+,).
 | --- | --- |
 | Microphone | Input device. The list updates when you plug devices in. |
 | Model | Whisper model. Use a *turbo* model live. |
-| Device | `GPU`, `CPU` or `NPU`. If the device cannot be used, Lectern switches to the CPU and tells you. If the GPU fails twice during a lecture, it continues on the CPU without losing audio, and a banner offers to restart Lectern on the GPU: the recording starts again by itself. |
+| Device | `GPU`, `CPU` or `NPU`. The first time a model runs on the NPU, compiling it takes a few minutes; later loads take about a second. If the device cannot be used, Lectern switches to the CPU and tells you. If the GPU fails twice during a lecture, it continues on the CPU without losing audio, and a banner offers to restart Lectern on the GPU: the recording starts again by itself. |
 | Language | Language of the lecture. *Auto-detect* works, but a fixed language is more reliable on short sentences. |
 | Precision | *Fast* (greedy decoding) is recommended live. *High* (beam search 5) is more accurate but every sentence arrives a few seconds later. |
 | Sensitivity, Pause | How loud speech must be, and how long a silence closes a sentence. For a distant speaker use *High* sensitivity and a pause around 1 s. |
-| Context | Terms valid for every course, added to the course's recurring terms. |
+| Context | Terms valid for every course, added to the course's recurring terms. Not used on the NPU, where OpenVINO GenAI does not support them yet. |
 | Preview while you speak | Turn it off to save power on battery: text appears only at each pause. |
 | Time for every sentence | Prefixes each sentence with `[hh:mm:ss]`. |
 | Also save the audio | Saves a `.wav` in the lecture folder, or in the course's audio folder if set. You can transcribe it again later with a more accurate model. |
@@ -324,6 +350,7 @@ more accurate than transcribing short sentences one by one.
 | Speech is almost never detected (the waveform moves but is rarely colored) | Install `pw-record` (`pipewire-utils` on Fedora, `pipewire-bin` on Debian/Ubuntu). **Help → Open log file** shows which way the microphone is recorded (`via pw-record` or `via Qt`). |
 | *No microphone found* | Check that PipeWire or PulseAudio is running and that the microphone is not muted in your system settings. |
 | The GPU is not used | Install the Intel compute runtime (see [System packages](https://github.com/VarCode-ai/monad#system-packages-by-distribution)) and check **Help → Open log file**. |
+| The NPU fails with `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE` | The NPU driver of your system has no compiler, as in Fedora 44 and 45. Lectern then uses the Intel driver it brings with it: with the installer, run `./install.sh` again so that it downloads it. See [The NPU is listed but the model does not load](docs/troubleshooting.md#the-npu-is-listed-but-the-model-does-not-load). |
 
 More fixes are in [docs/troubleshooting.md](docs/troubleshooting.md), and the problems common to every
 Monad app in the [Monad troubleshooting guide](https://github.com/VarCode-ai/monad/blob/HEAD/docs/troubleshooting.md).

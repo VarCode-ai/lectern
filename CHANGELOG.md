@@ -9,6 +9,35 @@ then named `ai-app-local-openvino`, together with OVMS Manager; its history was 
 
 ## [Unreleased]
 
+### Fixed
+
+- Whisper never loaded on the NPU on distributions whose NPU driver has no compiler, such as Fedora 44 and 45
+  (`intel-npu-driver` 1.32): every model failed with `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE` and Lectern moved to
+  the CPU. Lectern now brings the user-space part of the official Intel NPU driver 1.38 with its compiler, as
+  OVMS Manager does in its container image, and uses it when the system driver has no compiler. The AppImage
+  carries it, `install.sh` downloads it only when the machine needs it (`--no-npu-driver` to skip it), and
+  `LECTERN_NPU_DRIVER=system` or `bundled` overrides the choice. The kernel module and the firmware stay those
+  of the system. On a Core Ultra 7 355, large-v3-turbo now transcribes about 6 times faster than real time on
+  the NPU.
+- The window froze while a model compiled on the NPU for the first time (minutes): creating the Whisper pipeline
+  holds Python's GIL for the whole compilation. Lectern now compiles it in a separate process and shows the
+  time elapsed in the status bar.
+- Models compiled for the NPU had to be compiled again (minutes) after compiling another one: the NPU driver keeps
+  them in a cache limited to 1 GB, smaller than a compiled Whisper. Lectern and `lectern-transcribe` now save
+  them as files in `~/.cache/lectern/ov_cache` and load them from there in a second or two, and turn off the
+  driver's cache.
+- With the interface in Italian (or any language with a decimal comma) the model saved for the NPU was never
+  found and Lectern compiled it again inside the window, freezing it for minutes: OpenVINO computed its cache key
+  with the number format of the system. Lectern now keeps the C number format, which Qt does not use.
+- On the NPU every sentence failed with `Check '*roi_end <= *max_dim' failed` when the course had recurring terms:
+  OpenVINO GenAI does not support the initial prompt there. On the NPU the course terms and the Context are no
+  longer passed to Whisper, and Lectern says so.
+
+### Changed
+
+- While a model compiles on the NPU for the first time, the message says it takes several minutes, not up to
+  one.
+
 ## [1.2.1] — 2026-10-29
 
 ### Fixed

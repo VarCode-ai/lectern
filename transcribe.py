@@ -27,6 +27,9 @@ os.environ.setdefault("DO_NOT_TRACK", "1")
 # ================= DEFAULTS =================
 # Folder holding the OpenVINO models (shared with OVMS Manager). Override with $OPENVINO_MODELS_DIR.
 MODELS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("OPENVINO_MODELS_DIR") or "~/models"))
+# Models compiled for the NPU are saved here the first time (minutes) and loaded from here afterwards (seconds).
+# The same folder as OV_CACHE in lectern.py, so the two share what they compiled.
+NPU_CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "lectern", "ov_cache")
 # Whisper models looked for when --model is not given, in order of preference: large-v3 is the most
 # accurate on hard audio (lectures, noise), turbo is much faster and only slightly less accurate.
 # Hugging Face repo ids: used from MODELS_DIR/<repo id> if present, otherwise downloaded there.
@@ -34,6 +37,8 @@ MODEL_CANDIDATES = (
     "OpenVINO/whisper-large-v3-int8-ov",
     "OpenVINO/whisper-large-v3-turbo-int8-ov",
 )
+# NPU_NO_PROMPT: on the NPU, OpenVINO GenAI 2026.4 fails on every segment when Whisper gets an initial prompt
+# (even one word: "Check '*roi_end <= *max_dim' failed"), so the context/course terms are only used on GPU and CPU.
 # Name of the output folder, created inside the folder being transcribed
 OUTPUT_DIRNAME = "transcripts"
 # ============================================
@@ -191,6 +196,10 @@ def find_audio_files(input_dir, output_dir, recursive):
 
 
 def main():
+    # Before OpenVINO is loaded: restart, if needed, with the Intel NPU driver that comes with Lectern
+    import npu_driver
+    npu_driver.use_bundled_driver()
+    npu_driver.no_driver_cache()
     # Line-buffered output: progress shows up immediately even with `| tee log.txt`
     sys.stdout.reconfigure(line_buffering=True)
     # Ctrl+C must stop right away: transcription runs in native code and Python's regular
@@ -250,8 +259,12 @@ def main():
     device = args.device
     print(f"Loading {model_dir} on {device}…")
     load_start = time.time()
+    if device == "NPU":
+        print("  (the first time, compiling for the NPU takes several minutes; then it is saved in "
+              f"{NPU_CACHE})")
     try:
-        pipe = openvino_genai.WhisperPipeline(model_dir, device)
+        props = {"CACHE_DIR": NPU_CACHE} if device == "NPU" else {}
+        pipe = openvino_genai.WhisperPipeline(model_dir, device, **props)
     except Exception as e:  # noqa: BLE001 - any compilation error deserves a clear message
         if device == "CPU":
             sys.exit(f"Cannot load the model on CPU: {e}")
@@ -274,7 +287,7 @@ def main():
         config.task = "transcribe"
         config.return_timestamps = timestamps  # needed to filter segments and to build paragraphs
         config.num_beams = num_beams
-        if prompt:
+        if prompt and device != "NPU":  # see NPU_NO_PROMPT
             config.initial_prompt = prompt
         return config
 
@@ -301,7 +314,8 @@ def main():
 
     audio_filter = CLEANUP_FILTERS[args.cleanup]
     print(f"Model ready in {time.time() - load_start:.1f} s · beam {beams} · audio cleanup: {args.cleanup}"
-          + (" · with prompt" if args.prompt else "") + "\n")
+          + ((" · prompt ignored on the NPU" if device == "NPU" else " · with prompt") if args.prompt else "")
+          + "\n")
 
     total_start = time.time()
     for n, file_path in enumerate(audio_files, 1):

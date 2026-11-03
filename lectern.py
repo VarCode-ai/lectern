@@ -19,6 +19,7 @@ Whisper long-form transcription).
 """
 import glob
 import json
+import locale
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import wave
@@ -33,6 +35,13 @@ import zlib
 from collections import deque
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+
+import npu_driver
+
+# Before the heavy imports: restart, if needed, with the Intel NPU driver that comes with Lectern (npu_driver.py)
+if __name__ == "__main__":
+    npu_driver.use_bundled_driver()
+npu_driver.no_driver_cache()  # compiled NPU models are saved in OV_CACHE instead (see Transcriber.compile_npu)
 
 import numpy as np
 
@@ -172,7 +181,7 @@ VAD_RESET_S = 30           # after this much continuous silence Silero's interna
 PARAGRAPH_GAP_S = 4.0      # pause after which a new paragraph starts
 LOG_PATH = os.path.join(CACHE_DIR, "lectern.log")  # diagnostics: timings and decisions of every step
 PARTIAL_BUDGET_S = 3.0     # a preview taking longer than this is interrupted: it must not block the rest
-OV_CACHE = os.path.join(CACHE_DIR, "ov_cache")  # GPU kernel cache: loading is faster from the 2nd start
+OV_CACHE = os.path.join(CACHE_DIR, "ov_cache")  # GPU kernels and NPU-compiled models: faster from the 2nd start
 # Silero VAD variant published specifically for OpenVINO (MIT license, ~1.3 MB, downloaded on first use)
 SILERO_URL = ("https://raw.githubusercontent.com/snakers4/silero-vad/master/"
               "src/silero_vad/data/silero_vad_openvino_16k.onnx")
@@ -532,15 +541,29 @@ class Transcriber(QThread):
             raise RuntimeError(tr("openvino-genai is missing: pip install openvino-genai")) from None
         name = os.path.basename(self.o["model"])
         self.status.emit(tr("Loading {name}…").format(name=name), "warn", True)
-        self.info.emit(tr("Compiling {name} on {device}: the first start can take up to a minute. "
-                          "You can already speak, the audio is kept aside.").format(name=name, device=self.o["device"]))
+        if self.o["device"] == "NPU":
+            # the NPU driver compiles the whole model the first time (minutes), then loads it from its cache
+            log.info("NPU driver: %s", npu_driver.active_driver())
+            self.info.emit(tr("Compiling {name} on the NPU: the first time it takes several minutes, later a few "
+                              "seconds. You can already speak, the audio is kept aside.").format(name=name))
+            t0 = time.time()
+            self.compile_npu(self.o["model"])
+            log.info("NPU compilation in a separate process: %.1f s", time.time() - t0)
+            if self.o["prompt"]:
+                self.info.emit(tr("On the NPU the course terms are not passed to Whisper: OpenVINO does not "
+                                  "support them there yet. To use them, choose the GPU or the CPU."))
+        else:
+            self.info.emit(tr("Compiling {name} on {device}: the first start can take up to a minute. "
+                              "You can already speak, the audio is kept aside.").format(name=name,
+                                                                                       device=self.o["device"]))
         t0 = time.time()
-        props = {"CACHE_DIR": OV_CACHE} if self.o["device"] == "GPU" else {}
+        props = {"CACHE_DIR": OV_CACHE} if self.o["device"] in ("GPU", "NPU") else {}
         try:
             pipe = openvino_genai.WhisperPipeline(self.o["model"], self.o["device"], **props)
         except Exception:  # noqa: BLE001 - retry without the cache before giving up
             if not props:
                 raise
+            log.exception("load with the cache failed, retrying without it")
             pipe = openvino_genai.WhisperPipeline(self.o["model"], self.o["device"])
         self.info.emit(tr("Model ready in {seconds} s.").format(seconds=f"{time.time() - t0:.1f}"))
         log.info("model loaded in %.1f s", time.time() - t0)
@@ -549,6 +572,33 @@ class Transcriber(QThread):
         self.pipe_ready.emit(key, pipe)
         return pipe
 
+    def compile_npu(self, model):
+        """Compile the model for the NPU in a separate process, which saves it as files in OV_CACHE: the
+        WhisperPipeline created afterwards loads them in a second or two. Creating a WhisperPipeline holds the
+        GIL for the whole compilation: done here, the first time it would freeze the window and stop the
+        microphone audio for minutes. With the files already saved, the process only loads them and exits."""
+        code = ("import sys, openvino_genai; "
+                "openvino_genai.WhisperPipeline(sys.argv[1], 'NPU', CACHE_DIR=sys.argv[2])")
+        name, t0, shown = os.path.basename(model), time.time(), -1
+        with tempfile.TemporaryFile(mode="w+") as err:
+            proc = subprocess.Popen([sys.executable, "-c", code, model, OV_CACHE], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+            while proc.poll() is None:
+                if self.abort:
+                    proc.kill()
+                    proc.wait()
+                    raise RuntimeError("NPU compilation stopped")
+                elapsed = int(time.time() - t0)
+                if elapsed >= 3 and elapsed != shown:  # a model from the cache is ready before this shows up
+                    shown = elapsed
+                    self.status.emit(tr("Compiling {name} for the NPU… {time}").format(
+                        name=name, time=f"{elapsed // 60}:{elapsed % 60:02d}"), "warn", True)
+                time.sleep(0.2)
+            if proc.returncode != 0:
+                err.seek(0)
+                lines = [line for line in err.read().splitlines() if line.strip()]
+                raise RuntimeError(lines[-1] if lines else f"NPU compilation failed (exit code {proc.returncode})")
+
     def start_pipeline(self):
         """Load the model; if the chosen accelerator cannot be used (no Intel GPU, missing driver…) fall back
         to the CPU. Return False, after emitting `failed`, if not even the CPU works."""
@@ -556,6 +606,8 @@ class Transcriber(QThread):
             self.pipe = self.load()
             return True
         except Exception as e:  # noqa: BLE001
+            if self.abort:  # stopped while loading: no fallback
+                return False
             log.exception("load failed on %s", self.o["device"])
             first = e
         device = self.o["device"]
@@ -648,7 +700,7 @@ class Transcriber(QThread):
         # generate up to 448 tokens, blocking transcription for tens of seconds
         cfg.max_new_tokens = int(min(440, 24 + 10 * len(audio) / SR))
         prompt = self.o["prompt"] if prompt is None else prompt
-        if prompt:
+        if prompt and self.o["device"] != "NPU":  # see NPU_NO_PROMPT
             cfg.initial_prompt = prompt
         t0 = time.time()
         generated, why = [], []
@@ -971,7 +1023,7 @@ class FileTranscriber(Transcriber):
             cfg.task = "transcribe"
             cfg.return_timestamps = stamps
             cfg.num_beams = beams
-            if prompt:
+            if prompt and self.o["device"] != "NPU":  # see NPU_NO_PROMPT
                 cfg.initial_prompt = prompt
             t0 = time.time()
             self.busy = ("file", t0)
@@ -3555,6 +3607,11 @@ def init_theme(app):
 def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
+    # Qt sets the C library locale from the system. With a decimal comma (Italian…) OpenVINO computes other cache
+    # keys for the models compiled for the NPU than the separate process of Transcriber.compile_npu, which runs in
+    # the C locale: the saved model was never found and was compiled again, freezing the window for minutes.
+    # Qt formats numbers and dates with QLocale, which this does not touch.
+    locale.setlocale(locale.LC_NUMERIC, "C")
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setDesktopFileName(APP_ID)
