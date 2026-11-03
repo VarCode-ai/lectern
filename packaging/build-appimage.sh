@@ -135,8 +135,23 @@ for app in "${APPS[@]}"; do
     echo "→ AppDir metadata"
     sed "s|@SCRIPT@|$SCRIPT|" "$ROOT/packaging/AppRun" > "$appdir/AppRun"
     chmod 755 "$appdir/AppRun"
-    cp "$src/$app.svg" "$appdir/$app.svg"
-    ln -sf "$app.svg" "$appdir/.DirIcon"
+    install -m644 "$src/$app.svg" "$appdir/$app.svg"   # readable by everyone, whatever the mode in the checkout
+    # .DirIcon must be a PNG (appimagetool refuses an SVG): rendered with the Qt bundled above
+    QT_QPA_PLATFORM=offscreen "$py" - "$appdir/$app.svg" "$appdir/$app.png" <<'PY'
+import sys
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication, QImage, QPainter
+from PySide6.QtSvg import QSvgRenderer
+app = QGuiApplication([])
+image = QImage(256, 256, QImage.Format.Format_ARGB32)
+image.fill(Qt.GlobalColor.transparent)
+painter = QPainter(image)
+QSvgRenderer(sys.argv[1]).render(painter)
+painter.end()
+sys.exit(0 if image.save(sys.argv[2]) else 1)
+PY
+    chmod 644 "$appdir/$app.png"
+    ln -sf "$app.png" "$appdir/.DirIcon"
     cat > "$appdir/$app.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
