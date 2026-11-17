@@ -15,7 +15,13 @@ process hangs, close it with `pkill -f lectern.py`.
 
 ### Intel GPU not used
 
-Lectern runs Whisper directly on your system, which needs the Intel GPU compute runtime:
+The status line says `Cannot use the GPU ([GPU] Context was not initialized for 0 device)`: OpenVINO
+found no GPU it can use. It supports only Intel GPUs (UHD, Iris Xe and Arc graphics, Arc cards): an AMD or
+NVIDIA GPU cannot run Whisper whatever driver is installed, and Lectern uses the CPU or the Intel NPU.
+
+`install.sh` finds an Intel GPU without its driver, or one your user cannot open, and offers to fix it
+(with `sudo`). To do it by hand: Lectern runs Whisper directly on your system, which needs the Intel GPU
+compute runtime:
 
 | Distribution | Command |
 | --- | --- |
@@ -26,7 +32,9 @@ Lectern runs Whisper directly on your system, which needs the Intel GPU compute 
 
 The packages in older LTS releases (for example Ubuntu 22.04) may not support recent GPUs such as Arc or
 Core Ultra graphics. In that case install the packages from the
-[Intel compute-runtime releases](https://github.com/intel/compute-runtime/releases).
+[Intel compute-runtime releases](https://github.com/intel/compute-runtime/releases). The opposite also
+happens: current releases support 11th gen Core (Tiger Lake) and newer, so on a 5th–10th gen Core the GPU
+needs the "legacy" releases listed on the same page.
 
 Your user must also be able to open `/dev/dri/renderD*`. On most desktops this is granted automatically
 to the logged-in user. If it isn't, add yourself to the `render` group and log in again:

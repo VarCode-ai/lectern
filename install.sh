@@ -83,6 +83,28 @@ has_lib() {  # has_lib libfoo.so.0: true if the dynamic linker can find the libr
         compgen -G "/lib*/*-linux-gnu*/$1*" >/dev/null
 }
 
+# gpu_nodes VENDOR: render nodes (/dev/dri/renderD*) of the GPUs of a PCI vendor (0x8086 Intel, 0x1002 AMD,
+# 0x10de NVIDIA), one per line
+gpu_nodes() {
+    local vendor
+    for vendor in /sys/class/drm/renderD*/device/vendor; do
+        [[ -r "$vendor" && "$(<"$vendor")" == "$1" ]] && echo "/dev/dri/$(basename "$(dirname "$(dirname "$vendor")")")"
+    done
+    return 0
+}
+intel_gpu() { [[ -n "$(gpu_nodes 0x8086)" ]]; }  # true if there is an Intel GPU
+intel_gpu_openable() {  # true if this user can open the render node of every Intel GPU
+    local node
+    while read -r node; do [[ -r "$node" && -w "$node" ]] || return 1; done < <(gpu_nodes 0x8086)
+}
+# ask QUESTION: true if the user answers yes (Enter = yes); false without a terminal
+ask() {
+    local answer
+    [[ -t 0 ]] || return 1
+    read -rp "  $1 [Y/n] " answer
+    [[ "${answer:-y}" =~ ^[yYsS] ]]
+}
+
 refresh_menu() {
     if command -v update-desktop-database >/dev/null; then update-desktop-database -q "$DATA_DIR/applications" || true; fi
     if command -v gtk-update-icon-cache >/dev/null; then gtk-update-icon-cache -q -t "$DATA_DIR/icons/hicolor" || true; fi
@@ -163,11 +185,42 @@ command -v ffmpeg >/dev/null ||
     echo "  (warning: systemd-inhibit not found: Lectern cannot keep the computer awake while it records)"
 has_lib libxcb-cursor.so.0 ||
     echo "  (warning: libxcb-cursor not found, Qt needs it on X11 sessions: $(distro_pkg libxcb-cursor0 xcb-util-cursor xcb-util-cursor libxcb-cursor0))"
-# Whisper on an Intel GPU runs on this machine (not in a container): it needs the Intel compute runtime
-if compgen -G "/dev/dri/renderD*" >/dev/null && ! compgen -G "/etc/OpenCL/vendors/intel*.icd" >/dev/null &&
-   ! has_lib libze_intel_gpu.so; then
-    echo "  (warning: Intel GPU compute runtime not found, without it only the CPU works:" \
-         "$(distro_pkg intel-opencl-icd intel-compute-runtime intel-compute-runtime intel-opencl))"
+# Whisper on an Intel GPU runs on this machine (not in a container): it needs the Intel compute runtime.
+# Without it OpenVINO sees no GPU ("[GPU] Context was not initialized for 0 device") and Lectern uses the CPU.
+# OpenVINO has a plugin only for Intel GPUs (integrated UHD/Iris Xe/Arc graphics and Arc cards): an AMD or
+# NVIDIA GPU cannot run Whisper whatever driver is installed, so for those nothing is installed
+GPU_REBOOT=""   # set when the driver needs a restart (rpm-ostree): OpenVINO cannot see it before
+if intel_gpu; then
+    if ! compgen -G "/etc/OpenCL/vendors/intel*.icd" >/dev/null && ! has_lib libze_intel_gpu.so; then
+        gpu_cmd="$(distro_pkg intel-opencl-icd intel-compute-runtime intel-compute-runtime intel-opencl)"
+        echo "→ Intel GPU found, but not its compute runtime: without it Whisper runs only on the CPU, which is slower."
+        # shellcheck disable=SC2086  # the command is split into its words on purpose
+        if [[ "$gpu_cmd" =~ ^(sudo|rpm-ostree)\  ]] && ask "Install the Intel GPU driver now ($gpu_cmd)?" &&
+           $gpu_cmd; then
+            echo "  Installed."
+            [[ "$gpu_cmd" == rpm-ostree* ]] && GPU_REBOOT="yes" &&
+                echo "  (restart the computer to apply the rpm-ostree layer)"
+        else
+            echo "  (warning: without the Intel GPU compute runtime only the CPU works. To install it: $gpu_cmd)"
+        fi
+    fi
+    # The render node is usually opened through the ACL that logind gives to the user at the screen; without
+    # it (e.g. login over SSH, some minimal desktops) the user must be in the group that owns it
+    if ! intel_gpu_openable; then
+        gpu_group="$(stat -c %G "$(gpu_nodes 0x8086 | head -n1)")"
+        echo "→ Your user cannot open the Intel GPU ($(gpu_nodes 0x8086 | head -n1), group $gpu_group)."
+        if [[ "$gpu_group" != root ]] && ask "Add $USER to the '$gpu_group' group (sudo usermod -aG $gpu_group $USER)?" &&
+           sudo usermod -aG "$gpu_group" "$USER"; then
+            echo "  Done: log out and in again (or restart the computer), then open Lectern."
+            GPU_REBOOT="yes"
+        else
+            echo "  (warning: without access to the GPU only the CPU works. Fix: sudo usermod -aG $gpu_group $USER," \
+                 "then log out and in again)"
+        fi
+    fi
+elif [[ -n "$(gpu_nodes 0x1002)$(gpu_nodes 0x10de)" ]]; then
+    echo "  (note: OpenVINO can use only Intel GPUs, not AMD or NVIDIA ones: Whisper runs on the CPU, or on the" \
+         "Intel NPU if there is one)"
 fi
 
 # The app is single-instance: if it is still open (even minimized), starting it from the menu brings the
@@ -244,6 +297,17 @@ elif reason="$("$VENV_DIR/bin/python" "$RUN_DIR/npu_driver.py" needed)"; then
     has_lib libze_loader.so.1 ||
         echo "  (warning: the Level Zero loader is missing, the NPU needs it:" \
              "$(distro_pkg libze1 oneapi-level-zero level-zero-loader libze_loader1))"
+fi
+
+# The real check: does OpenVINO see the Intel GPU? It fails with the driver installed when the GPU is older
+# than the driver supports (current releases: 11th gen Core / Tiger Lake and newer; 5th–10th gen need the
+# "legacy" releases of compute-runtime), or when another library is missing
+if intel_gpu && [[ -z "$GPU_REBOOT" ]] &&
+   ! "$VENV_DIR/bin/python" -c "import sys, openvino as ov; sys.exit('GPU' not in ov.Core().available_devices)" 2>/dev/null; then
+    echo "  (warning: OpenVINO does not see the Intel GPU, Lectern will use the CPU. If the GPU is older than the"
+    echo "   11th gen Core (Tiger Lake, Iris Xe), the driver of your distribution may no longer support it: install"
+    echo "   the legacy release from https://github.com/intel/compute-runtime/releases. Check with:"
+    echo "   $VENV_DIR/bin/python -c \"import openvino as ov; print(ov.Core().available_devices)\")"
 fi
 
 echo "→ Icon, menu entry and commands"
